@@ -437,7 +437,7 @@ The function stopped with an error, because the gene has 10 expression values (o
 
 # AI DISCLAIMER 
 
-I used claude code to help explain the 2.2, 2.4 part of the assignement to me, i also asked it to explain things to me in a simplier term because I have only used R a couple times in my previous class so I was getting confused alot and also getting alot of errors. 
+I used Claude Code, it gave me code templates with blanks to fill in when I stuck too long on a question/code and it explained errors, explained concepts in simpler terms, and suggested corrections to my written answers. I ran all the code myself and wrote the interpretations with its feedback. 
 
 ```{r disconnect, include=FALSE}
 DBI::dbDisconnect(con, shutdown = TRUE)
