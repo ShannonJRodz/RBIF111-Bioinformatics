@@ -111,7 +111,8 @@ all.equal(my_mean(bmi, na.rm = TRUE), mean(bmi, na.rm = TRUE))
 
 **Interpretation:**
 
-
+The `DESCRIBE` output shows that BMXBMI is a DOUBLE column, so it is numeric and safe to average. The column has `r length(bmi)` values, and `r sum(is.na(bmi))` of them are NA, so I used `na.rm = TRUE`. My loop-based function gave a mean BMI of `r round(my_mean(bmi, na.rm = TRUE), 2)`, which is the same as R's `mean()`.
+ 
 
 ## 1.4 Hypothesis test: height vs weight
 
@@ -153,10 +154,154 @@ res_adults
 
 **Results and interpretation:**
 
+The correlation between height and weight was r = `r round(res_all$estimate, 2)`, with a p-value below 2.2e-16. Because the p-value is smaller than 0.05, I reject the null hypothesis. This means there is a positive correlation between height and weight: taller people tend to weigh more. When I only looked at adults, the correlation dropped to r = `r round(res_adults$estimate, 2)`. This is probably because children get taller and heavier as they age, so including all ages makes the relationship look stronger.
+
 
 # Question 2
 
+## 2.1 Download the data and save it as a .csv
 
+I used the RNAseq example from the Week 1 notes, GSE266550.
+
+```{r q2-load-function}
+# Load GEODataDownload from the course script (lines 651-733).
+# Line 706 is changed to use the gene-name file I downloaded in my browser,
+# because the NCBI link in the script returned a web page instead of the file.
+script_lines <- readLines("~/Downloads/Week 1 Intro to fundamentals of R, obtaining open source data, and data management containers/2-Week1_Script.R")
+script_lines[706] <- '    apath <- "~/Downloads/Human.GRCh38.p13.annot.tsv.gz"'
+eval(parse(text = script_lines[651:733]))
+```
+
+```{r q2-download}
+RNAseqData <- GEODataDownload(DS = "GSE266550",
+                              gpl = "GPL18573",
+                              gsm = "1011101100",
+                              PlateAnnotInfo = "Only needed for MicroArrays",
+                              GenerateMetaData = "Only needed for MicroArrays",
+                              Technology = "RNAseq")
+dim(RNAseqData)
+colnames(RNAseqData)
+```
+
+```{r q2-save-reload}
+write.csv(RNAseqData, "GSE266550_data.csv", row.names = FALSE)
+reloaded <- read.csv("GSE266550_data.csv")
+dim(RNAseqData)
+dim(reloaded)
+dim(RNAseqData) == dim(reloaded)
+```
+
+**How the code works:** 
+
+write.csv() saves the RNAseqData object as a file on my computer. read.csv() then reads the file back into R as a new object called reloaded. The TRUE TRUE result shows that the number of rows and columns are the same, so no data was lost when saving.
+
+
+## 2.2 Subset_Comparison column
+
+```{r q2-subset-comparison}
+reloaded$Subset_Comparison <- "Treatment vs control"
+head(reloaded$Subset_Comparison)
+dim(reloaded)
+```
+
+Adding a Subset_Comparison column is useful because if I later combine results from several different experiments into one table, the label tells me which data set each row came from. Without it, the same gene could show up more than once with different fold changes, and I wouldn't know which comparison each number belongs to.
+
+## 2.3 Average expression per sample
+
+```{r q2-sample-means}
+sample_means <- colMeans(reloaded[, 7:17])
+sample_means
+
+hist(sample_means, main = "Per-sample average expression", xlab = "Average count")
+boxplot(sample_means, main = "Per-sample average expression", ylab = "Average count")
+stripchart(sample_means, method = "jitter", pch = 19,
+           main = "Per-sample average expression", xlab = "Average count")
+dotchart(sample_means, main = "Per-sample average expression", xlab = "Average count")
+plot(sort(sample_means), type = "b",
+     main = "Per-sample averages, sorted", xlab = "Rank", ylab = "Average count")
+```
+
+## 2.4 Average expression per gene
+
+```{r q2-gene-means}
+gene_means <- rowMeans(reloaded[, 7:17])
+names(gene_means) <- reloaded$SYMBOL
+length(gene_means)
+
+hist(log10(gene_means + 1), main = "Per-gene average expression",
+     xlab = "log10(average count + 1)")
+boxplot(log10(gene_means + 1), main = "Per-gene average expression",
+        ylab = "log10(average count + 1)")
+plot(sort(log10(gene_means + 1)), type = "l",
+     main = "Per-gene averages, sorted", xlab = "Rank", ylab = "log10(average count + 1)")
+```
+
+**Interpretation:** 
+
+Gene averages ranged from `r round(min(gene_means))` to `r round(max(gene_means))`, so I used log10 to spread them out. On a normal scale every gene would have been so small and squished into one bar near 0. Most genes have moderate expression (around 100 to 1,000 counts), and only a few genes are very highly expressed. 
+ 
+ ## 2.5 Top 5 and bottom 5 genes
+
+```{r q2-top-bottom}
+top5 <- sort(gene_means, decreasing = TRUE)[1:5]
+top5
+
+bottom5 <- sort(gene_means)[1:5]
+bottom5
+
+# Get the counts for these 10 genes across all 11 samples
+ten_genes <- c(names(top5), names(bottom5))
+ten_counts <- reloaded[match(ten_genes, reloaded$SYMBOL), 7:17]
+rownames(ten_counts) <- ten_genes
+
+boxplot(t(ten_counts), las = 2, log = "y",
+        main = "Top 5 and bottom 5 genes across samples",
+        ylab = "Count (log scale)")
+```
+
+**Interpretation:** 
+
+the top 5 genes are COX1, RNR2, ND4,these are mitochondrial genes, HBB is a hemoglobin beta, and EEF1A1 helps build proteins in cells. 
+
+the bottoms CHRNA2, KCNES, SIRPD, LY6G6F AND LOC100131496 these dont average much, so they were barely detected. 
+
+## 2.6 Volcano plot
+
+```{r q2-volcano}
+reloaded$Significant <- reloaded$padj < 0.05 & abs(reloaded$log2FoldChange) > 1
+table(reloaded$Significant)
+
+ggplot(reloaded, aes(x = log2FoldChange, y = -log10(padj), color = Significant)) +
+  geom_point(alpha = 0.5) +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed") +
+  geom_vline(xintercept = c(-1, 1), linetype = "dashed") +
+  scale_color_manual(values = c("grey", "red")) +
+  labs(title = "Volcano plot: Treatment vs Control",
+       x = "log2 fold change", y = "-log10(adjusted p-value)")
+```
+
+**How to read a volcano plot:** 
+
+The x-axis shows the log2 fold change, which is how much each gene changed in treatment compared to control, and the y-axis shows −log10(adjusted p-value), which is how significant that change is. The red dots are genes with an adjusted p-value below 0.05 and more than a 2-fold change, so they are the genes the treatment really affected. Genes on the right went up in treatment and genes on the left went down. Most red dots are in the upper right, so most of the significant genes went up with treatment. 364 genes were not plotted because their adjusted p-value was NA.  
+
+## 2.7 MA plot
+
+```{r q2-ma}
+reloaded$AvgExpr <- gene_means
+
+ggplot(reloaded, aes(x = log10(AvgExpr + 1), y = log2FoldChange, color = padj < 0.05)) +
+  geom_point(alpha = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  scale_color_manual(values = c("grey", "blue")) +
+  labs(title = "MA plot: Treatment vs Control",
+       x = "log10(average count + 1)", y = "log2 fold change", color = "padj < 0.05")
+```
+
+**How to read an MA plot and how it differs from a volcano plot:** 
+
+In an MA plot, the x-axis shows how strongly each gene is expressed (its average count), and the y-axis shows the log2 fold change, or how much the gene changed in treatment. The dashed line at 0 means no change, so genes above the line went up and genes below went down. Blue points are genes with an adjusted p-value below 0.05.
+
+The difference from a volcano plot is that a volcano plot shows fold change against significance (the adjusted p-value), while an MA plot shows fold change against average expression. In my MA plot, the points are more spread out on the left side, because genes with low counts are noisier. 
 
 # Question 3
 
@@ -168,6 +313,10 @@ res_adults
 
 # Question 5 (optional)
 
+
+# AI DISCLAIMER 
+
+I used claude code to help explain the 2.2, 2.4 part of the assignement to me, i also asked it to explain things to me in a simplier term because I have only used R a couple times in my previous class so I was getting confused alot and also getting alot of errors. 
 
 ```{r disconnect, include=FALSE}
 DBI::dbDisconnect(con, shutdown = TRUE)
