@@ -1,0 +1,174 @@
+---
+title: "RBIF111 Homework 1"
+author: "Shannon Joe"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+library(DBI)
+library(duckdb)
+library(repoquet)
+library(ggplot2)
+```
+
+```{r connect-db, include=FALSE}
+# Reconnect to the course DuckDB repository built from the Week 1 Part 3 notes.
+# (The build itself is done once, in build_repository.R, not in this file.)
+public_example <- readRDS("~/RBIF111/database/public_example.rds")
+cfg   <- load_repository_config(public_example$ConfigPath)
+paths <- RepositoryInitialize(cfg$FormattedDBPath)
+TempDirPath <- file.path(cfg$FormattedDBPath, "duckdb_temp")
+dir.create(TempDirPath, recursive = TRUE, showWarnings = FALSE)
+con <- open_duckdb(FormattedDBPath = cfg$FormattedDBPath,
+                   DBName = cfg$DBName,
+                   TempDirPath = TempDirPath,
+                   GB = cfg$DuckDB_GB,
+                   ReadOnly = TRUE)
+```
+
+# Question 1
+
+## 1.1 A loop-based mean function
+
+```{r q1-function}
+my_mean <- function(x, na.rm = FALSE) {
+  if (na.rm == TRUE) {
+    x <- x[!is.na(x)]
+  }
+  total <- 0
+  for (i in 1:length(x)) {
+    total <- total + x[i]
+  }
+  total / length(x)
+}
+```
+
+**How the code works:**
+
+The function starts a running total at 0. The for loop visits each position in the vector and adds the value x[i] to the total. At the end it divides the total by length(x), the number of values.
+
+```{r q1-compare}
+v <- c(4, 8, 15, 16, 23, 42)
+my_mean(v)
+mean(v)
+```
+
+**Interpretation:**
+Both `my_mean(v)` and `mean(v)` returned 18, so my loop-based function gives the same answer as R's built-in `mean()`.
+
+## 1.2 Handling NA values
+
+```{r q1-na}
+v_na <- c(4, NA, 15, 16, NA, 42)
+
+my_mean(v_na)
+mean(v_na)
+
+my_mean(v_na, na.rm = TRUE)
+mean(v_na, na.rm = TRUE)
+```
+
+**How the NA handling works:**
+
+When `na.rm = TRUE`, the line `x <- x[!is.na(x)]` removes the missing values (the NAs) before the loop runs, so the mean is calculated from only the remaining numbers. In my example, `c(4, NA, 15, 16, NA, 42)` becomes `c(4, 15, 16, 42)`, which has 4 values. When `na.rm = FALSE`, the NAs stay in the vector, so the loop adds an NA into the total. In R, any number plus NA is NA, so the function returns `NA`. This matches how R's `mean()` works, because the true mean cannot be known if some values are missing.
+
+
+**Why the loop-based function and mean() are expected to agree:**
+
+My function and `mean()` are expected to agree because they use the same definition of a mean: add up all the values and divide by the number of values. My function just does the adding one value at a time with a loop. Because the math is the same, both give the same answer, as shown above.
+
+## 1.3 Mean of a clinical variable from the DuckDB repository
+
+Confirm the table and column exist and are numeric:
+
+```{r q1-find-table}
+tabs <- DBI::dbListTables(con)
+grep("BMX", tabs, value = TRUE)
+```
+
+```{r q1-describe}
+# Replace NHANES_BMX with the exact table name printed above
+DBI::dbGetQuery(con, "DESCRIBE NHANES_BMX")
+```
+
+Pull the column with SQL and compare:
+
+```{r q1-duckdb-mean}
+bmi <- DBI::dbGetQuery(con, "SELECT BMXBMI FROM NHANES_BMX")$BMXBMI
+length(bmi)
+sum(is.na(bmi))
+
+my_mean(bmi, na.rm = TRUE)
+mean(bmi, na.rm = TRUE)
+all.equal(my_mean(bmi, na.rm = TRUE), mean(bmi, na.rm = TRUE))
+```
+
+**Interpretation:**
+
+
+
+## 1.4 Hypothesis test: height vs weight
+
+**Null hypothesis (H0):** There is zero correlation between height and weight in NHANES participants (the true correlation coefficient, r, equals 0).
+
+**Alternative hypothesis (H1):** There is a correlation between height and weight in NHANES participants (the true correlation coefficient, r, is not equal to 0).
+
+
+```{r q1-cor-all}
+hw <- DBI::dbGetQuery(con, "
+  SELECT BMXHT, BMXWT
+  FROM NHANES_BMX
+  WHERE BMXHT IS NOT NULL AND BMXWT IS NOT NULL")
+nrow(hw)
+
+ggplot(hw, aes(BMXHT, BMXWT)) +
+  geom_point(alpha = 0.1) +
+  labs(x = "Height (cm)", y = "Weight (kg)",
+       title = "NHANES: height vs weight (all ages)")
+
+res_all <- cor.test(hw$BMXHT, hw$BMXWT)
+res_all
+```
+
+```{r q1-cor-adults}
+# Restrict to adults by joining to demographics on SEQN
+# Check the real DEMO table name first: grep("DEMO", tabs, value = TRUE)
+hw_adults <- DBI::dbGetQuery(con, "
+  SELECT b.BMXHT, b.BMXWT
+  FROM NHANES_BMX b
+  JOIN NHANES_DEMO d ON b.SEQN = d.SEQN
+  WHERE d.RIDAGEYR >= 18
+    AND b.BMXHT IS NOT NULL AND b.BMXWT IS NOT NULL")
+nrow(hw_adults)
+
+res_adults <- cor.test(hw_adults$BMXHT, hw_adults$BMXWT)
+res_adults
+```
+
+**Results and interpretation:**
+
+
+# Question 2
+
+
+
+# Question 3
+
+
+
+# Question 4
+
+
+
+# Question 5 (optional)
+
+
+```{r disconnect, include=FALSE}
+DBI::dbDisconnect(con, shutdown = TRUE)
+```
