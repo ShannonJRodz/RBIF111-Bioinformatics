@@ -305,11 +305,132 @@ The difference from a volcano plot is that a volcano plot shows fold change agai
 
 # Question 3
 
+## 3.1 Build the SummarizedExperiment
+
+I used the 10 samples that were in the DESeq2 analysis (columns 7 to 16). GSM8250231 was left out because the gsm code from the notes only has 10 digits, so that sample has no group.
+
+```{r q3-pieces}
+library(SummarizedExperiment)
+
+counts <- as.matrix(reloaded[, 7:16])
+rownames(counts) <- reloaded$ENTREZID
+log_counts <- log2(counts + 1)
+
+gene_info <- data.frame(SYMBOL = reloaded$SYMBOL,
+                        log2FoldChange = reloaded$log2FoldChange,
+                        padj = reloaded$padj,
+                        row.names = reloaded$ENTREZID)
+
+codes <- strsplit("1011101100", "")[[1]]
+groups <- ifelse(codes == "1", "Treatment", "Control")
+sample_info <- data.frame(Group = groups, row.names = colnames(counts))
+sample_info
+```
+
+## 3.2 Check that the names match
+
+```{r q3-check}
+all(rownames(counts) == rownames(gene_info))
+all(colnames(counts) == rownames(sample_info))
+```
+
+```{r q3-build}
+se <- SummarizedExperiment(assays = list(counts = counts, log_counts = log_counts),
+                           rowData = gene_info,
+                           colData = sample_info)
+se
+```
+
+## 3.3 Subsetting
+
+```{r q3-subset}
+se_treat <- se[, se$Group == "Treatment"]
+dim(se_treat)
+
+se_sig <- se[which(rowData(se)$padj < 0.05), ]
+dim(se_sig)
+
+se_both <- se[which(rowData(se)$padj < 0.05), se$Group == "Treatment"]
+dim(se_both)
+```
+
+## 3.4 Top 5 DE genes
+
+```{r q3-top5}
+top5_ids <- rownames(se)[order(rowData(se)$padj)][1:5]
+top5_table <- assay(se, "counts")[top5_ids, ]
+rownames(top5_table) <- rowData(se)[top5_ids, "SYMBOL"]
+knitr::kable(top5_table, caption = "Raw counts for the top 5 DE genes")
+```
+
+## 3.5 Why use a SummarizedExperiment?
+
+
+A SummarizedExperiment keeps the counts, the gene information, and the sample information linked in one object. When I subset it, for example to keep only treatment samples, all pieces are filtered at the same time, so the genes and samples always stay matched. With separate data frames, I would have to filter each one by myself, and if I made a mistake, the samples could get mixed up without any warning. It also let me store two assays (raw counts and log counts) for the same genes and samples.
+
+When I would use it: I would choose a SummarizedExperiment when my data has a matrix of measurements (like genes × samples) plus information about both the rows and the columns, and when I want to use Bioconductor packages like DESeq2. For a simple table with one row per observation, like the NHANES height and weight data, a normal data frame is easier. 
 
 
 # Question 4
 
+Bioconductor puts genes as rows and samples as columns because there are usually many more genes (about 17,000 here) than samples (only 10), and a tall table is easier to store and look at. It also lets gene information go in rowData and sample information go in colData.
 
+Statistical learning functions like lm() expect the opposite: one row per sample (the thing we measured) and one column per feature (gene) (the variables we use to predict). If I gave lm() my expression matrix as it is, it would treat each gene as an observation and each sample as a variable. The results would be wrong, because I would be comparing genes instead of comparing samples. To fix it, I would first flip the matrix with t(). 
+
+## 4.2 Correlation function
+
+```{r q4-function}
+gene_cor <- function(se, gene_id, variable, source = "colData") {
+  # 1. Get this gene's expression across all samples
+  expr <- assay(se, "log_counts")[gene_id, ]
+
+  # 2. Get the metadata variable from colData or rowData
+  if (source == "colData") {
+    meta <- colData(se)[[variable]]
+  } else {
+    meta <- rowData(se)[gene_id, variable]
+  }
+
+  # 3. CHECK before doing anything
+  if (length(expr) != length(meta)) {
+    stop("Can't compare: the gene has ", length(expr), " values but '",
+         variable, "' has ", length(meta), " value(s).")
+  }
+  if (!is.numeric(meta)) {
+    stop("'", variable, "' is not numeric, so it can't be correlated.")
+  }
+
+  # 4. Only if the checks pass: run the test
+  result <- cor.test(expr, meta)
+  list(estimate = result$estimate, p.value = result$p.value)
+}
+```
+
+**How the function works:** 
+
+The function first gets the gene's expression values from the log_counts assay. Then it gets the metadata variable from either colData or rowData. Before running anything, it checks that both have the same length (number of values) and that the variable is numeric. If either check fails, stop() gives an error message. Only if the checks pass does it run cor.test() and return the estimate and p-value. 
+
+### Using a colData variable
+
+```{r q4-coldata}
+se$Group_num <- ifelse(se$Group == "Treatment", 1, 0)
+my_gene <- top5_ids[1]
+rowData(se)[my_gene, "SYMBOL"]
+gene_cor(se, my_gene, "Group_num", source = "colData")
+```
+
+The correlation between BICDL1 and the treatment group was r = `r round(gene_cor(se, my_gene, "Group_num")$estimate, 2)` (p = `r signif(gene_cor(se, my_gene, "Group_num")$p.value, 2)`). This is a strong positive correlation, which means BICDL1 expression is higher in treatment samples than in control samples.
+
+### Using a rowData variable
+
+```{r q4-rowdata, error=TRUE}
+gene_cor(se, my_gene, "log2FoldChange", source = "rowData")
+```
+
+The function stopped with an error, because the gene has 10 expression values (one per sample) but log2FoldChange has only 1 value (one per gene). A per-gene value is the same for every sample, so it can't be correlated with values that change across samples. This connects to 4.1: colData describes the samples (columns), and rowData describes the genes (rows). My length check caught this instead of returning a number that looks real but means nothing.
+
+
+ 
 
 # Question 5 (optional)
 
